@@ -87,6 +87,12 @@ Panel {
   readonly property string zoxideMode: Settings.ZOXIDE_MODES.indexOf(st.zoxide) >= 0 ? st.zoxide : "rank"
   readonly property bool zoxideAdd: typeof st.zoxideAdd === "boolean" ? st.zoxideAdd : true
   readonly property bool fixedHeight: typeof sty.fixedHeight === "boolean" ? sty.fixedHeight : Settings.STYLE_DEFAULTS.fixedHeight
+  // Card shader: style.json's own value ("" = not set here) and the files
+  // in ~/.config/omarchy/shaders/ the Shader row cycles through.
+  readonly property string shaderStyle: typeof sty.shader === "string" ? sty.shader : ""
+  readonly property bool themeShaders: sty.themeShaders === true
+  readonly property string shaderDir: homeDir + "/.config/omarchy/" + Settings.SHADER_DIR
+  property var shaderFiles: []
 
   // The agent the launcher starts on: the remembered pick, else ai.json's
   // agent, else the first installed one (the menu picks it the same way).
@@ -201,6 +207,8 @@ Panel {
       var top = Settings.styleTop(sty)
       row({ key: "style:top", label: "Distance from top", value: top < 0 ? "Centred" : percent(top), adjust: true, enabled: styleValid })
       row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
+      row({ key: "style:shader", label: "Shader", value: Settings.shaderLabel(shaderStyle), adjust: true, enabled: styleValid })
+      row({ key: "style:themeShaders", label: "Theme shaders", value: onOff(themeShaders), toggle: true, enabled: styleValid })
     } else if (id === "ai") {
       if (!aiValid) note("ai.json is not valid JSON")
       row({ key: "ai:agent", label: "Agent", value: aiAgent ? agentLabel(aiAgent) : "None installed", adjust: true,
@@ -288,7 +296,10 @@ Panel {
       setState("barLeftClick", Settings.cycle(Settings.BAR_CLICKS, barLeftClick, direction))
     else if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
     else if (key === "cursorStyle") setState("cursorStyle", Settings.cycle(Settings.CURSOR_STYLES, cursorStyle, direction))
-    else if (key === "style:top") {
+    else if (key === "style:shader") {
+      var next = Settings.cycle(Settings.shaderChoices(shaderFiles), shaderStyle, direction)
+      setStyle("shader", next === "" ? undefined : next)
+    } else if (key === "style:top") {
       var top = Settings.stepTop(Settings.styleTop(sty), direction)
       setStyle("top", top < 0 ? "center" : top)
     } else if (key.indexOf("style:") === 0) {
@@ -338,6 +349,7 @@ Panel {
     else if (key === "root:add") pickFolders()
     else if (key.indexOf("root:") === 0 && r.rootId)
       updateRoot(r.rootId, function(x) { x.enabled = !x.enabled; return x })
+    else if (key === "style:themeShaders") setStyle("themeShaders", themeShaders ? undefined : true)
     else if (key.indexOf("section:") === 0) {
       if (r.toggle) setState("allSectionsOff", Settings.toggleListed(sectionsOff, key.slice(8)))
     } else if (key.indexOf("tab:") === 0)
@@ -475,6 +487,10 @@ Panel {
     aiReader.load(root.aiPath, 16384)
     defaultMenuReader.load(root.defaultMenuPath, 1048576)
     userMenuReader.load(root.userMenuPath, 1048576)
+    if (!shaderLister.running) {
+      shaderLister.command = Settings.shaderListCommand(root.shaderDir)
+      shaderLister.running = true
+    }
     if (!agentProbe.running) {
       var binaries = []
       for (var i = 0; i < AiConfig.SUPPORTED_AGENTS.length; i++) {
@@ -635,6 +651,14 @@ Panel {
         }
         root.whenResults = next
       }
+    }
+  }
+
+  Process {
+    id: shaderLister
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.shaderFiles = String(text || "").split("\0").filter(function(n) { return Settings.SHADER_NAME_PATTERN.test(n) })
     }
   }
 

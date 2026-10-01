@@ -60,7 +60,50 @@ Item {
     store.menu.menuHeightFraction = Settings.styleNumber(style, "pickerHeight")
     store.menu.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : store.styleDefaults.fixedHeight
     store.menu.launcherTopFraction = Settings.styleTop(style)
+    // "shader" and "themeShaders" are opt-in: not in the defaults written to
+    // a new file, so shell.toml's [menu] shader applies until one is set.
+    store.menu.shaderStyleValue = typeof style.shader === "string" ? style.shader : ""
+    store.menu.themeShadersAllowed = style.themeShaders === true
     if (!exists) store.writeStyleDefaults()
+    // Every open: also catches a shader recompiled in place.
+    Qt.callLater(store.checkShader)
+  }
+
+  // Vets menu.shaderCandidate before the card loads it (see
+  // Settings.SHADER_CHECK_PROGRAM). A refused file leaves the plain card.
+  property string shaderSignature: ""
+  property bool shaderCheckPending: false
+
+  function checkShader() {
+    var path = store.menu.shaderCandidate
+    if (!path) {
+      store.shaderSignature = ""
+      store.menu.shaderFile = ""
+      return
+    }
+    if (shaderCheckProc.running) {
+      store.shaderCheckPending = true
+      return
+    }
+    shaderCheckProc.checkedPath = path
+    shaderCheckProc.command = Settings.shaderCheckCommand(path, store.menu.fileReadDeadline)
+    shaderCheckProc.running = true
+  }
+
+  function applyShaderCheck(path, signature) {
+    if (path !== store.menu.shaderCandidate) return
+    if (!signature) {
+      if (store.menu.shaderFile !== "" || store.shaderSignature !== "refused:" + path)
+        console.warn("[omarchy-menu-omni] shader refused (missing, not a regular file, not yours, or over "
+          + Settings.SHADER_MAX_BYTES + " bytes): " + path)
+      store.shaderSignature = "refused:" + path
+      store.menu.shaderFile = ""
+      return
+    }
+    if (store.menu.shaderFile === path && store.shaderSignature !== "" && signature !== store.shaderSignature)
+      store.menu.bumpShaderRevision()
+    store.shaderSignature = signature
+    store.menu.shaderFile = path
   }
 
   function writeStyleDefaults() {
@@ -174,6 +217,19 @@ Item {
   }
 
   Process { id: styleWriteProc }
+
+  Process {
+    id: shaderCheckProc
+    property string checkedPath: ""
+    stdout: StdioCollector { id: shaderCheckOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      store.applyShaderCheck(shaderCheckProc.checkedPath, exitCode === 0 ? shaderCheckOut.text.trim() : "")
+      if (store.shaderCheckPending || shaderCheckProc.checkedPath !== store.menu.shaderCandidate) {
+        store.shaderCheckPending = false
+        Qt.callLater(store.checkShader)
+      }
+    }
+  }
 
   // A save asked for while one is being written is not dropped: it runs as
   // soon as the first finishes.

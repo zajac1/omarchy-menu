@@ -429,11 +429,51 @@ to try:
 The empty All prompt is always compact. Source edits usually reload
 automatically; after adding or renaming a file run `omarchy restart shell`.
 
+### Card shader
+
+The card can run a compiled Qt shader (`.qsb`) as its background, behind
+the rows and text.
+The setting is read from three places; the first one that is set wins:
+
+| Source | Key | Values |
+| --- | --- | --- |
+| `style.json` | `"shader"` | `"none"`, or a path: `~/…`, absolute, or relative to `~/.config/omarchy/` |
+| `~/.config/omarchy/shell.toml` | `[menu] shader` | the same values |
+| the theme's `shell.toml` | `[menu] shader` | a plain `name.qsb` in the theme folder, used only with `"themeShaders": true` in `style.json` |
+
+Settings › Look › **Shader** cycles Default (unset here), None and every
+`.qsb` in `~/.config/omarchy/shaders/`; **Theme shaders** switches the theme
+source on. Theme shaders are off by default: installed themes come from other
+people's repositories, and a heavy shader slows the whole desktop, not just
+the menu.
+
+Before the card loads a file it is checked: opened without following
+symlinks, a regular file owned by you or root, at most 1 MiB. A refused,
+missing or broken shader leaves the plain card and logs one warning. A file
+recompiled in place is picked up on the next open.
+
+Shaders get `source` (the card's background shape), `resolution` (texels), `time` (seconds the
+card has been open; it stops while the menu is closed), `accent`,
+`foreground` and `background`. Compile with `qsb` from `qt6-shadertools`,
+which Omarchy does not install:
+
+```bash
+/usr/lib/qt6/bin/qsb --glsl "100 es,120,150" --hlsl 50 --msl 12 -o my.frag.qsb my.frag
+```
+
+Qt compiles for GLSL ES 100 and 120 too, which have no integer bit
+operations, `uint` or `fwidth`. The card texture is premultiplied, so scale
+anything a shader adds by the source alpha to keep the corners transparent.
+The shader renders at one texel per point and is scaled up, and `time`
+advances at 12 fps while the menu is open (about 4.6% of a core on the test
+VM); a static shader costs next to nothing.
+
 ### Code layout
 
 | File | Role |
 | --- | --- |
 | `Menu.qml` | Entry point: tabs, routing, row model, keys and the card's layout |
+| `CardShader.qml` | The card shader: effect, load-error fallback, reload revision and the open-only clock; `SettingsStore.qml` vets its file |
 | `AnswerEngine.qml` | Instant answers (calculator, conversions, time, generators, kill, URL, shell, web search) and the data they fetch |
 | `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes over $HOME and the search roots, root status and background indexing, zoxide scores, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |

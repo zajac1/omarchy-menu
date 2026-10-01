@@ -173,8 +173,88 @@ function writeCommand(dir, path, content, keepExisting) {
     "bash", dir, path, content]
 }
 
+// ------------------------------------------------------------ shaders ----
+// A compiled Qt shader (.qsb) drawn over the card. Three sources, first one
+// set wins:
+//   style.json "shader"          Omni's own; set from the bar popup
+//   shell.toml [menu] shader     the user's machine-level omarchy file
+//   the theme's [menu] shader    only with style.json "themeShaders": true
+// "none" in either user source turns the shader off. A user value may be
+// ~/..., absolute, or relative to ~/.config/omarchy/ (the same rules as the
+// stock-menu patch); a theme may only name a plain file in its own folder,
+// because installed themes come from strangers' repos and a heavy shader
+// stalls the whole desktop, not just the menu.
+var SHADER_DIR = "shaders" // under ~/.config/omarchy/, listed by the popup
+var SHADER_NAME_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.qsb$/
+var SHADER_MAX_BYTES = 1048576
+
+function userShaderPath(value, home) {
+  if (value.indexOf("~/") === 0) return home + value.slice(1)
+  if (value.charAt(0) === "/") return value
+  return home + "/.config/omarchy/" + value
+}
+
+function shaderPath(styleValue, userValue, themeValue, allowTheme, home, themePath) {
+  var own = typeof styleValue === "string" ? styleValue : ""
+  if (own) return own === "none" ? "" : userShaderPath(own, home)
+  if (userValue) return userValue === "none" ? "" : userShaderPath(userValue, home)
+  if (allowTheme && themeValue && SHADER_NAME_PATTERN.test(themeValue)) return themePath + "/" + themeValue
+  return ""
+}
+
+// What the popup's Shader row cycles through: "" (not set here, so
+// shell.toml or the theme decide), "none", then each listed file.
+function shaderChoices(names) {
+  var files = (names || []).filter(function(n) { return SHADER_NAME_PATTERN.test(n) }).sort()
+  return ["", "none"].concat(files.map(function(n) { return SHADER_DIR + "/" + n }))
+}
+
+function shaderLabel(value) {
+  if (!value) return "Default"
+  if (value === "none") return "None"
+  var name = String(value).replace(/^.*\//, "")
+  return name.replace(/\.frag\.qsb$|\.qsb$/, "")
+}
+
+// Checks a shader file before its URL reaches ShaderEffect, which would load
+// whatever the path points at: opened with O_NOFOLLOW, then through that
+// descriptor a regular file owned by the user or root and within the byte
+// ceiling. Prints dev:inode:size:mtime, so a file recompiled in place gets a
+// fresh URL (Qt caches shaders by URL). Path and ceiling arrive as argv.
+var SHADER_CHECK_PROGRAM = [
+  'use Fcntl;',
+  'my ($path, $max) = @ARGV;',
+  'sysopen(my $fh, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;',
+  'my @st = stat($fh) or exit 1;',
+  'exit 1 unless -f _;',
+  'exit 1 unless $st[4] == $< || $st[4] == 0;',
+  'exit 1 if $st[7] > $max;',
+  'print join(":", @st[0, 1, 7, 9]), "\\n";'
+].join("\n")
+
+function shaderCheckCommand(path, seconds) {
+  return ["timeout", String(seconds || 5), "perl", "-e", SHADER_CHECK_PROGRAM, "--", path, String(SHADER_MAX_BYTES)]
+}
+
+// Plain .qsb files (no symlinks: find does not follow them and -type f
+// skips them) directly in `dir`, NUL-separated and bounded.
+function shaderListCommand(dir, seconds) {
+  return ["bash", "-c",
+    'timeout ' + String(seconds || 5) + ' find -H "$1" -maxdepth 1 -type f -name "*.qsb" -printf "%f\\0" 2>/dev/null | head -c 65536',
+    "bash", dir]
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
+    SHADER_DIR: SHADER_DIR,
+    SHADER_NAME_PATTERN: SHADER_NAME_PATTERN,
+    SHADER_MAX_BYTES: SHADER_MAX_BYTES,
+    shaderPath: shaderPath,
+    shaderChoices: shaderChoices,
+    shaderLabel: shaderLabel,
+    SHADER_CHECK_PROGRAM: SHADER_CHECK_PROGRAM,
+    shaderCheckCommand: shaderCheckCommand,
+    shaderListCommand: shaderListCommand,
     STYLE_DEFAULTS: STYLE_DEFAULTS,
     STYLE_RANGES: STYLE_RANGES,
     APPS_VIEWS: APPS_VIEWS,

@@ -402,6 +402,93 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   assert(homeArgv.join(" ").indexOf("-E /NAS") >= 0, "the $HOME search excludes roots inside it")
 }
 
+// ------------------------------------------------------- card shader ------
+{
+  const home = "/home/u"
+  const theme = "/home/u/.local/state/omarchy/current/theme"
+  const resolve = (style, user, themed, allow) => Settings.shaderPath(style, user, themed, allow === true, home, theme)
+
+  eq(resolve(undefined, undefined, undefined), "", "no shader anywhere means no shader")
+  eq(resolve("shaders/a.qsb", "shaders/b.qsb", "c.qsb", true), home + "/.config/omarchy/shaders/a.qsb", "style.json wins over shell.toml and the theme")
+  eq(resolve("", "shaders/b.qsb", "c.qsb", true), home + "/.config/omarchy/shaders/b.qsb", "an empty style value falls through to shell.toml")
+  eq(resolve(undefined, undefined, "c.qsb", true), theme + "/c.qsb", "a theme shader applies when allowed and nothing else is set")
+  eq(resolve(undefined, undefined, "c.qsb", false), "", "a theme shader is ignored unless themeShaders is on")
+  eq(resolve("none", "shaders/b.qsb", "c.qsb", true), "", "none in style.json turns every shader off")
+  eq(resolve(undefined, "none", "c.qsb", true), "", "none in shell.toml turns the theme shader off")
+  eq(resolve(42, "shaders/b.qsb", undefined), home + "/.config/omarchy/shaders/b.qsb", "a non-string style value is ignored")
+  eq(resolve("~/fx/dots.qsb"), home + "/fx/dots.qsb", "a user value may use ~/")
+  eq(resolve("/opt/fx/dots.qsb"), "/opt/fx/dots.qsb", "a user value may be absolute")
+  eq(resolve(undefined, undefined, "menu-2_dark.frag.qsb", true), theme + "/menu-2_dark.frag.qsb", "a theme may name a plain file with dots, dashes and underscores")
+  for (const value of ["/etc/x.qsb", "~/x.qsb", "../other/m.qsb", "shaders/m.qsb", "m.frag", "..", "...qsb", ".m.qsb", "a\\b.qsb",
+                       "m.qsb?rev=9", "m.qsb#x", "%2e%2e%2fm.qsb", "m .qsb", "m.QSB", "m.qsb/", "file:///etc/x.qsb"])
+    eq(resolve(undefined, undefined, value, true), "", "a theme cannot name " + JSON.stringify(value))
+
+  eq(Settings.shaderChoices(["b.qsb", "a.frag.qsb", "../x.qsb", "notes.txt"]),
+     ["", "none", "shaders/a.frag.qsb", "shaders/b.qsb"], "the Shader row offers default, none, then plain .qsb files sorted")
+  eq(Settings.cycle(Settings.shaderChoices(["a.qsb"]), "", 1), "none", "cycling from default goes to none")
+  eq(Settings.cycle(Settings.shaderChoices(["a.qsb"]), "~/elsewhere.qsb", 1), "", "a hand-written value not in the list cycles to the start")
+  eq([Settings.shaderLabel(""), Settings.shaderLabel("none"), Settings.shaderLabel("shaders/mnoise-dense.frag.qsb")],
+     ["Default", "None", "mnoise-dense"], "Shader row labels")
+  eq(Settings.withKey({ fontScale: 1, shader: "none" }, "shader", undefined), { fontScale: 1 }, "choosing Default removes the key")
+  assert(!("shader" in Settings.STYLE_DEFAULTS) && !("themeShaders" in Settings.STYLE_DEFAULTS),
+    "a new style.json does not pin a shader, so shell.toml keeps working")
+}
+
+{
+  const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-shader-"))
+  const check = (p) => {
+    const cmd = Settings.shaderCheckCommand(p)
+    const r = spawnSync(cmd[0], cmd.slice(1), { encoding: "utf8" })
+    return r.status === 0 ? r.stdout.trim() : null
+  }
+  const ok = path.join(dir, "ok.qsb"); fs.writeFileSync(ok, "QSB")
+  const link = path.join(dir, "link.qsb"); fs.symlinkSync(ok, link)
+  const big = path.join(dir, "big.qsb"); fs.writeFileSync(big, Buffer.alloc(Settings.SHADER_MAX_BYTES + 1))
+  const sub = path.join(dir, "sub.qsb"); fs.mkdirSync(sub)
+  const first = check(ok)
+  assert(/^\d+:\d+:\d+:\d+$/.test(first || ""), "a regular file of ours passes and reports dev:inode:size:mtime")
+  eq(check(link), null, "a symlinked shader is refused")
+  eq(check(big), null, "a shader over the size ceiling is refused")
+  eq(check(sub), null, "a directory is refused")
+  eq(check(path.join(dir, "missing.qsb")), null, "a missing shader is refused")
+  fs.writeFileSync(ok + ".new", "QSB, recompiled"); fs.renameSync(ok + ".new", ok)
+  assert(check(ok) !== first, "a file recompiled in place gets a new signature, so the card reloads it")
+
+  const cmd = Settings.shaderListCommand(dir)
+  fs.writeFileSync(path.join(dir, "notes.txt"), "x")
+  const listed = spawnSync(cmd[0], cmd.slice(1), { encoding: "utf8" }).stdout.split("\0").filter(Boolean).sort()
+  eq(listed, ["big.qsb", "ok.qsb"], "the popup lists plain .qsb files only: no symlinks, folders or other files")
+  fs.rmSync(dir, { recursive: true, force: true })
+}
+
+{
+  // The performance contract, checked in the source: a closed menu, or one
+  // without a working shader, never drives frames.
+  const fs = require("fs")
+  const menuQml = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const cardShader = fs.readFileSync(path.join(root, "CardShader.qml"), "utf8")
+  const block = menuQml.match(/  CardShader \{[^]*?\n  \}/)
+  assert(block, "Menu.qml creates a CardShader")
+  assert(block && /\n    running: root\.opened && panel\.visible\n/.test(block[0]), "the shader clock only runs while the menu is open")
+  assert(block && /\n    file: root\.shaderFile\n/.test(block[0]), "the card only loads a vetted file")
+  assert(/Timer \{[\s\S]*?running: shader\.running && shader\.active/.test(cardShader), "the clock stops when the menu closes or the shader fails")
+  // Performance: the effect must not redraw on every display frame, nor
+  // re-render the whole card (text included) into a texture each frame.
+  assert(!/FrameAnimation \{/.test(cardShader), "the shader clock is a Timer, not a per-frame FrameAnimation")
+  const frameRate = Number((cardShader.match(/property int frameRate: (\d+)/) || [])[1])
+  assert(frameRate > 0 && frameRate <= 15, "the shader animates at 15 fps or less (each frame costs ~36 wakeups on the VM)")
+  assert(!/layer\.effect: cardShader\.effect/.test(menuQml), "the shader is not a layer effect over the whole card")
+  const backdrop = (menuQml.match(/id: shaderBackdrop[\s\S]*?\n      \}\n/) || [""])[0]
+  assert(/visible: cardShader\.active/.test(backdrop) && /layer\.enabled: cardShader\.active/.test(backdrop), "the shader backdrop only exists while a shader is active")
+  // `visible` turns false whenever the window hides; an effect bound to it
+  // is destroyed on close and recompiled on open.
+  assert(!/(layer\.enabled|active): (shaderBackdrop\.)?visible/.test(backdrop), "the effect outlives closing the menu")
+  assert(/layer\.textureSize:/.test(backdrop), "the shader backdrop renders at a bounded texture size")
+  assert(block && /\n    texelsPerPixel: 1\n/.test(block[0]), "the menu renders the effect at one texel per point")
+  eq((menuQml.match(/FrameAnimation/g) || []).length, 0, "the menu itself adds no frame-driven animation")
+}
+
 // ----------------------------------------------------------- zoxide ------
 {
   const home = "/home/u"

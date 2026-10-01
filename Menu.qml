@@ -236,6 +236,18 @@ Item {
   // never changes size while typing or switching tabs.
   property bool launcherFixedHeight: false
 
+  // Card shader (Settings.shaderPath has the rules). style.json's "shader"
+  // and "themeShaders" land here; shaderFile is the candidate once
+  // SettingsStore.checkShader() has vetted it, "" otherwise.
+  property string shaderStyleValue: ""
+  property bool themeShadersAllowed: false
+  property string shaderFile: ""
+  readonly property string shaderCandidate: Settings.shaderPath(root.shaderStyleValue,
+    Color.userShellValues["menu.shader"], Color.themeShellValues["menu.shader"],
+    root.themeShadersAllowed, Color.home, Color.currentThemePath)
+  onShaderCandidateChanged: settingsStore.checkShader()
+  function bumpShaderRevision() { cardShader.revision++ }
+
   // Row height follows the font: the stock minimums (50 and 58) were sized for
   // full-size text and would otherwise hold the rows tall while the labels
   // shrank inside them, which reads as padding rather than a smaller menu.
@@ -1937,6 +1949,19 @@ Item {
     menu: root
   }
 
+  CardShader {
+    id: cardShader
+    file: root.shaderFile
+    // Only while the menu is open: a menu window kept alive between opens
+    // stays `visible` while closed, and the clock would keep redrawing it.
+    running: root.opened && panel.visible
+    // One texel per point: see shaderBackdrop.
+    texelsPerPixel: 1
+    accent: Color.accent
+    foreground: root.foreground
+    background: root.background
+  }
+
   AnswerEngine {
     id: answerEngine
     menu: root
@@ -2321,6 +2346,52 @@ Item {
       color: root.background
       borderSpec: root.borderSpec
       padding: root.contentMargin
+      // The card shader, drawn behind the content. It used to be a layer
+      // effect over the whole card, which rendered the card -- text, icons
+      // and all -- into a texture and shaded it again on every frame, at full
+      // resolution. Here the effect's source is only the card's background
+      // shape, the content is drawn over it untouched, and the effect renders
+      // into a texture of cardShader.texelsPerPixel texels per point (a
+      // quarter of the pixels on a HiDPI screen), scaled up. Inset by the
+      // border so the border stays on top.
+      Item {
+        id: shaderBackdrop
+        readonly property real texelsPerPixel: cardShader.texelsPerPixel > 0 ? cardShader.texelsPerPixel : Screen.devicePixelRatio
+        visible: cardShader.active
+        anchors.fill: parent
+        anchors.leftMargin: card.borderLeft
+        anchors.rightMargin: card.borderRight
+        anchors.topMargin: card.borderTop
+        anchors.bottomMargin: card.borderBottom
+        // Bound to the shader, not to `visible`: an item's visible turns false
+        // whenever the menu window hides, and a layer or Loader following it
+        // would destroy the effect on every close and compile it again on
+        // every open (measured: +61 ms to open, worse stalls).
+        layer.enabled: cardShader.active
+        layer.smooth: true
+        layer.textureSize: Qt.size(Math.max(1, Math.round(width * texelsPerPixel)), Math.max(1, Math.round(height * texelsPerPixel)))
+
+        Rectangle {
+          id: shaderBase
+          anchors.fill: parent
+          radius: Math.max(0, root.cornerRadius - card.borderLeft)
+          color: root.background
+        }
+
+        ShaderEffectSource {
+          id: shaderBaseTexture
+          sourceItem: shaderBase
+          hideSource: true
+          visible: false
+        }
+
+        Loader {
+          anchors.fill: parent
+          active: cardShader.active
+          sourceComponent: cardShader.effect
+          onLoaded: item.source = shaderBaseTexture
+        }
+      }
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
