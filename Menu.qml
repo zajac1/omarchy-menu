@@ -2275,8 +2275,10 @@ Item {
   PanelWindow {
     id: panel
     readonly property bool shown: root.opened && root.rowsLoaded
+    // Full size while shown, and during the warm-up below.
+    readonly property bool fullSize: panel.shown || panel.warming
     visible: root.rowsLoaded
-    anchors { top: true; left: true; bottom: panel.shown; right: panel.shown }
+    anchors { top: true; left: true; bottom: panel.fullSize; right: panel.fullSize }
     implicitWidth: 1
     implicitHeight: 1
     mask: panel.shown ? null : closedMask
@@ -2293,8 +2295,25 @@ Item {
     // Closing is instant.
     property real fade: panel.shown ? 1 : 0
     Behavior on fade { enabled: panel.shown; NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
-    Binding { target: panel.contentItem; property: "visible"; value: panel.shown }
-    Binding { target: panel.contentItem; property: "opacity"; value: panel.fade }
+    Binding { target: panel.contentItem; property: "visible"; value: panel.fullSize }
+    Binding { target: panel.contentItem; property: "opacity"; value: panel.shown ? panel.fade : 0.01 }
+
+    // Warm-up: the first open after the shell starts (at login) paid ~150 ms
+    // for the window's first full-size frame -- buffers, layout, glyphs.
+    // Once the menu has loaded, the closed window grows to full size for a moment with its content at 1%
+    // opacity (Qt skips fully transparent items, so 0 would render nothing),
+    // still click-through and without keyboard focus, then shrinks back.
+    property bool warming: false
+    function warmUp() {
+      if (panel.shown || !root.rowsLoaded) return
+      panel.warming = true
+      warmUpEnd.restart()
+    }
+    Timer { id: warmUpEnd; interval: 500; onTriggered: panel.warming = false }
+    Connections {
+      target: root
+      function onRowsLoadedChanged() { if (root.rowsLoaded) Qt.callLater(panel.warmUp) }
+    }
 
     // The card opens centered exactly as always. The first search keystroke
     // or submenu move freezes the top line where it currently sits — from

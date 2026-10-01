@@ -289,7 +289,8 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   eq(/visible: root\.opened/.test(panelBlock), false, "the menu window's visibility does not follow opened")
   eq(/keyboardFocus: panel\.shown \? WlrKeyboardFocus\.Exclusive : WlrKeyboardFocus\.None/.test(panelBlock), true, "a closed menu takes no keyboard focus")
   eq(/mask: panel\.shown \? null : closedMask/.test(panelBlock), true, "a closed menu takes no pointer input")
-  eq(/anchors \{ top: true; left: true; bottom: panel\.shown; right: panel\.shown \}/.test(panelBlock), true, "a closed menu shrinks to one pixel")
+  eq(/anchors \{ top: true; left: true; bottom: panel\.fullSize; right: panel\.fullSize \}/.test(panelBlock)
+     && /readonly property bool fullSize: panel\.shown \|\| panel\.warming/.test(menuSource), true, "a closed menu shrinks to one pixel (full size only while shown or warming up)")
 }
 
 // ------------------------------------------------------ search roots ------
