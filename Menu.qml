@@ -2181,6 +2181,10 @@ Item {
     filterText = ""
     selectedIndex = 0
     cursorActive = mode !== "input"
+    // A picker summoned over the open launcher keeps the window, so the
+    // launcher's search would hand it its frozen line and height (#13).
+    panel.cardTop = -1
+    panel.maxRowsHeight = -1
     root.disarmPointer()
     opened = true
     rebuildDisplay()
